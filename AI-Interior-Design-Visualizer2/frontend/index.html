@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Interior Design Visualizer</title>
+
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f1ed;
+      color: #222;
+    }
+
+    header {
+      background: #222;
+      color: white;
+      padding: 18px 30px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+
+    header p {
+      margin: 5px 0 0;
+      color: #ddd;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 18px;
+      padding: 18px;
+    }
+
+    .panel,
+    .image-box {
+      background: white;
+      padding: 15px;
+      border-radius: 12px;
+      box-shadow: 0 5px 18px rgba(0,0,0,0.08);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 18px;
+    }
+
+    input,
+    select,
+    button {
+      width: 100%;
+      padding: 9px;
+      margin-top: 8px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+    }
+
+    button {
+      background: #222;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    button.secondary {
+      background: #6b705c;
+    }
+
+    button.light {
+      background: #c9a66b;
+      color: #222;
+    }
+
+    .mask-list {
+      max-height: 220px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      padding: 8px;
+      border-radius: 10px;
+      background: #fafafa;
+    }
+
+    .mask-item {
+      display: block;
+      font-size: 13px;
+      padding: 6px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .before-box {
+      position: relative;
+      width: 100%;
+      min-height: 300px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #eee;
+    }
+
+    .before-box img.base {
+      width: 100%;
+      display: block;
+    }
+
+    .before-box img.overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      pointer-events: none;
+    }
+
+    .canvas-wrap {
+      width: 620px;
+      max-width: 100%;
+      overflow: auto;
+    }
+
+    #designCanvas {
+      border: 1px solid #bbb;
+      border-radius: 10px;
+      background: #eee;
+    }
+
+    .canvas-container {
+      border-radius: 10px;
+    }
+
+    .catalog-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .catalog-item {
+      background: #f7f7f7;
+      border: 1px dashed #777;
+      color: #222;
+      padding: 10px;
+      border-radius: 8px;
+      text-align: center;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .palette-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 8px 0 12px;
+    }
+
+    .color-chip {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      border: 1px solid #aaa;
+      cursor: pointer;
+    }
+
+    .status {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #555;
+      background: #f7f7f7;
+      padding: 9px;
+      border-radius: 8px;
+      line-height: 1.4;
+    }
+
+    .share-link {
+      display: block;
+      margin-top: 10px;
+      word-break: break-all;
+      color: #174a9c;
+      font-size: 13px;
+    }
+
+    .tiny {
+      font-size: 12px;
+      color: #666;
+      line-height: 1.4;
+    }
+
+    .row-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+  </style>
+</head>
+
+<body>
+<header>
+  <h1>AI Interior Design Visualizer</h1>
+  <p>Redecorate your room before buying a single thing</p>
+</header>
+
+<div id="root"></div>
+
+<script>
+const e = React.createElement;
+
+function App() {
+  const [file, setFile] = React.useState(null);
+  const [imageId, setImageId] = React.useState(null);
+  const [imageUrl, setImageUrl] = React.useState(null);
+  const [masks, setMasks] = React.useState([]);
+  const [selectedMasks, setSelectedMasks] = React.useState([]);
+  const [wallColor, setWallColor] = React.useState("#D6CCC2");
+  const [style, setStyle] = React.useState("modern");
+  const [palettes, setPalettes] = React.useState(null);
+  const [status, setStatus] = React.useState("Upload a room image to start.");
+  const [shareUrl, setShareUrl] = React.useState("");
+
+  const fabricCanvas = React.useRef(null);
+
+  React.useEffect(function () {
+    const canvas = new fabric.Canvas("designCanvas", {
+      width: 620,
+      height: 430,
+      backgroundColor: "#eeeeee",
+      preserveObjectStacking: true
+    });
+
+    fabricCanvas.current = canvas;
+
+    function dropHandler(ev) {
+      ev.preventDefault();
+
+      const kind = ev.dataTransfer.getData("kind");
+      const rect = canvas.upperCanvasEl.getBoundingClientRect();
+
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+
+      addFurniture(kind, x, y);
+    }
+
+    function dragOverHandler(ev) {
+      ev.preventDefault();
+    }
+
+    canvas.upperCanvasEl.addEventListener("dragover", dragOverHandler);
+    canvas.upperCanvasEl.addEventListener("drop", dropHandler);
+
+    return function () {
+      canvas.upperCanvasEl.removeEventListener("dragover", dragOverHandler);
+      canvas.upperCanvasEl.removeEventListener("drop", dropHandler);
+      canvas.dispose();
+    };
+  }, []);
+
+  function getCanvas() {
+    return fabricCanvas.current;
+  }
+
+  function setCanvasBackground(url) {
+    const canvas = getCanvas();
+
+    if (!canvas) {
+      setStatus("Canvas is not ready.");
+      return;
+    }
+
+    const oldFurniture = canvas.getObjects().filter(function(obj) {
+      return obj.customType === "furniture";
+    });
+
+    canvas.clear();
+    canvas.backgroundColor = "#eeeeee";
+
+    const fullUrl = window.location.origin + url + "?t=" + Date.now();
+
+    fabric.Image.fromURL(fullUrl, function(img) {
+      const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+
+      img.set({
+        left: 0,
+        top: 0,
+        scaleX: scale,
+        scaleY: scale,
+        selectable: false,
+        evented: false,
+        customType: "background"
+      });
+
+      canvas.add(img);
+      canvas.sendToBack(img);
+
+      oldFurniture.forEach(function(obj) {
+        canvas.add(obj);
+      });
+
+      canvas.renderAll();
+      setStatus("Editable canvas image loaded. Ab furniture drag/add kar sakte ho.");
+    });
+  }
+
+  async function uploadImage() {
+    if (!file) {
+      setStatus("Please select an image first.");
+      return;
+    }
+
+    setStatus("Uploading image and generating SAM masks. CPU par time lag sakta hai...");
+
+    const formData = new FormData();
+    formData.append("room", file);
+
+    const res = await fetch("/api/segment", {
+      method: "POST",
+      body: formData
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      setStatus(data.error || "Upload failed.");
+      return;
+    }
+
+    setImageId(data.image_id);
+    setImageUrl(data.image_url);
+    setMasks(data.masks);
+    setSelectedMasks([]);
+    setShareUrl("");
+
+    setCanvasBackground(data.image_url);
+    loadPalettes(data.image_id);
+
+    setStatus("Image segmented. Mask select karo ya furniture add karo.");
+  }
+
+  async function loadPalettes(id) {
+    const res = await fetch("/api/palette", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ image_id: id })
+    });
+
+    const data = await res.json();
+
+    if (res.ok) {
+      setPalettes(data);
+    }
+  }
+
+  function toggleMask(maskId) {
+    if (selectedMasks.includes(maskId)) {
+      setSelectedMasks(selectedMasks.filter(function(id) {
+        return id !== maskId;
+      }));
+    } else {
+      setSelectedMasks(selectedMasks.concat([maskId]));
+    }
+  }
+
+  function selectOnly(maskId) {
+    setSelectedMasks([maskId]);
+  }
+
+  async function applyWallColor() {
+    if (!imageId || selectedMasks.length === 0) {
+      setStatus("Pehle wall/floor mask select karo.");
+      return;
+    }
+
+    setStatus("Applying color...");
+
+    const res = await fetch("/api/recolor", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        image_id: imageId,
+        mask_ids: selectedMasks,
+        color: wallColor
+      })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      setStatus(data.error || "Color apply failed.");
+      return;
+    }
+
+    setCanvasBackground(data.result_url);
+    setStatus("Color applied. Right canvas updated.");
+  }
+
+  async function applyStyle() {
+    if (!imageId || selectedMasks.length === 0) {
+      setStatus("Pehle furniture/object mask select karo.");
+      return;
+    }
+
+    setStatus("Applying furniture style...");
+
+    const res = await fetch("/api/style", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        image_id: imageId,
+        mask_ids: selectedMasks,
+        style: style
+      })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      setStatus(data.error || "Style apply failed.");
+      return;
+    }
+
+    setCanvasBackground(data.result_url);
+    setStatus("Style applied. Right canvas updated.");
+  }
+
+  function addFurniture(kind, x, y) {
+    const canvas = getCanvas();
+
+    if (!canvas) {
+      return;
+    }
+
+    if (!x) x = 250;
+    if (!y) y = 200;
+
+    let object = null;
+
+    if (kind === "sofa") {
+      const rect = new fabric.Rect({
+        width: 140,
+        height: 60,
+        rx: 16,
+        ry: 16,
+        fill: "#8B7355",
+        originX: "center",
+        originY: "center"
+      });
+
+      const text = new fabric.Text("Sofa", {
+        fontSize: 18,
+        fill: "white",
+        originX: "center",
+        originY: "center"
+      });
+
+      object = new fabric.Group([rect, text], { left: x, top: y });
+    }
+
+    if (kind === "table") {
+      const circle = new fabric.Circle({
+        radius: 42,
+        fill: "#A47148",
+        originX: "center",
+        originY: "center"
+      });
+
+      const text = new fabric.Text("Table", {
+        fontSize: 15,
+        fill: "white",
+        originX: "center",
+        originY: "center"
+      });
+
+      object = new fabric.Group([circle, text], { left: x, top: y });
+    }
+
+    if (kind === "lamp") {
+      const triangle = new fabric.Triangle({
+        width: 70,
+        height: 90,
+        fill: "#DDB892",
+        originX: "center",
+        originY: "center"
+      });
+
+      const text = new fabric.Text("Lamp", {
+        fontSize: 14,
+        fill: "#222",
+        originX: "center",
+        originY: "center"
+      });
+
+      object = new fabric.Group([triangle, text], { left: x, top: y });
+    }
+
+    if (kind === "plant") {
+      const leaf = new fabric.Circle({
+        radius: 35,
+        fill: "#6B8E23",
+        originX: "center",
+        originY: "center",
+        top: -18
+      });
+
+      const pot = new fabric.Rect({
+        width: 55,
+        height: 35,
+        fill: "#A47148",
+        originX: "center",
+        originY: "center",
+        top: 35
+      });
+
+      const text = new fabric.Text("Plant", {
+        fontSize: 12,
+        fill: "white",
+        originX: "center",
+        originY: "center",
+        top: -18
+      });
+
+      object = new fabric.Group([leaf, pot, text], { left: x, top: y });
+    }
+
+    if (kind === "rug") {
+      const rug = new fabric.Rect({
+        width: 160,
+        height: 75,
+        rx: 25,
+        ry: 25,
+        fill: "#C9A66B",
+        originX: "center",
+        originY: "center"
+      });
+
+      const text = new fabric.Text("Rug", {
+        fontSize: 16,
+        fill: "#222",
+        originX: "center",
+        originY: "center"
+      });
+
+      object = new fabric.Group([rug, text], { left: x, top: y });
+    }
+
+    if (object) {
+      object.set({
+        customType: "furniture",
+        cornerStyle: "circle",
+        transparentCorners: false
+      });
+
+      canvas.add(object);
+      canvas.setActiveObject(object);
+      canvas.renderAll();
+      setStatus(kind + " added. You can move, resize, or rotate it.");
+    }
+  }
+
+  function deleteSelectedObject() {
+    const canvas = getCanvas();
+    const active = canvas.getActiveObject();
+
+    if (active && active.customType === "furniture") {
+      canvas.remove(active);
+      canvas.renderAll();
+      setStatus("Selected furniture deleted.");
+    } else {
+      setStatus("Please select a furniture item first.");
+    }
+  }
+
+  function clearFurniture() {
+    const canvas = getCanvas();
+
+    canvas.getObjects().forEach(function(obj) {
+      if (obj.customType === "furniture") {
+        canvas.remove(obj);
+      }
+    });
+
+    canvas.renderAll();
+    setStatus("Furniture items cleared.");
+  }
+
+  async function saveDesign() {
+    const canvas = getCanvas();
+
+    const dataUrl = canvas.toDataURL({
+      format: "png",
+      quality: 1
+    });
+
+    const res = await fetch("/api/designs/save", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ data_url: dataUrl })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      setStatus(data.error || "Save failed.");
+      return;
+    }
+
+    setShareUrl(window.location.origin + data.saved_url);
+    setStatus("Design saved successfully.");
+  }
+
+  return e("div", { className: "container" }, [
+    e("div", { className: "panel", key: "controls" }, [
+      e("h2", null, "Controls"),
+
+      e("label", null, "Upload Room Image"),
+      e("input", {
+        type: "file",
+        accept: "image/*",
+        onChange: function(ev) {
+          setFile(ev.target.files[0]);
+        }
+      }),
+
+      e("button", { onClick: uploadImage }, "Upload + Segment with SAM"),
+      e("p", { className: "tiny" }, "CPU par small image use karo. 500x500 ya 700x700 best hai."),
+
+      e("h3", null, "Select Masks"),
+      e("div", { className: "mask-list" },
+        masks.map(function(mask) {
+          return e("div", { className: "mask-item", key: mask.id }, [
+            e("label", null, [
+              e("input", {
+                type: "checkbox",
+                checked: selectedMasks.includes(mask.id),
+                onChange: function() {
+                  toggleMask(mask.id);
+                }
+              }),
+              " " + mask.name + " - " + mask.type
+            ]),
+            e("button", {
+              style: { padding: "5px", fontSize: "11px" },
+              onClick: function() {
+                selectOnly(mask.id);
+              }
+            }, "Select Only")
+          ]);
+        })
+      ),
+
+      e("h3", null, "Wall / Floor Color"),
+      e("input", {
+        type: "color",
+        value: wallColor,
+        onChange: function(ev) {
+          setWallColor(ev.target.value);
+        }
+      }),
+      e("button", { className: "secondary", onClick: applyWallColor }, "Apply Color to Selected Mask"),
+
+      palettes && e("div", null, [
+        e("h3", null, "AI Suggested Palettes"),
+        palettes.recommendations.map(function(palette) {
+          return e("div", { key: palette.name }, [
+            e("strong", null, palette.name),
+            e("div", { className: "palette-row" },
+              palette.colors.map(function(color) {
+                return e("div", {
+                  key: color,
+                  className: "color-chip",
+                  title: color,
+                  style: { background: color },
+                  onClick: function() {
+                    setWallColor(color);
+                  }
+                });
+              })
+            )
+          ]);
+        })
+      ]),
+
+      e("h3", null, "Furniture Style"),
+      e("select", {
+        value: style,
+        onChange: function(ev) {
+          setStyle(ev.target.value);
+        }
+      }, [
+        e("option", { value: "modern" }, "Modern"),
+        e("option", { value: "wood" }, "Wood"),
+        e("option", { value: "minimal" }, "Minimal"),
+        e("option", { value: "velvet" }, "Velvet")
+      ]),
+      e("button", { className: "secondary", onClick: applyStyle }, "Apply Style to Selected Furniture/Object"),
+
+      e("h3", null, "Furniture Catalog"),
+      e("p", { className: "tiny" }, "Drag item to canvas, or use Add buttons below."),
+
+      e("div", { className: "catalog-grid" }, [
+        ["sofa", "Sofa"],
+        ["table", "Table"],
+        ["lamp", "Lamp"],
+        ["plant", "Plant"],
+        ["rug", "Rug"]
+      ].map(function(item) {
+        return e("div", {
+          key: item[0],
+          className: "catalog-item",
+          draggable: true,
+          onDragStart: function(ev) {
+            ev.dataTransfer.setData("kind", item[0]);
+          }
+        }, item[1]);
+      })),
+
+      e("div", { className: "row-buttons" }, [
+        e("button", { onClick: function() { addFurniture("sofa"); } }, "Add Sofa"),
+        e("button", { onClick: function() { addFurniture("table"); } }, "Add Table"),
+        e("button", { onClick: function() { addFurniture("lamp"); } }, "Add Lamp"),
+        e("button", { onClick: function() { addFurniture("plant"); } }, "Add Plant"),
+        e("button", { onClick: function() { addFurniture("rug"); } }, "Add Rug")
+      ]),
+
+      e("button", { className: "light", onClick: deleteSelectedObject }, "Delete Selected Furniture"),
+      e("button", { className: "light", onClick: clearFurniture }, "Clear Furniture Items"),
+      e("button", { onClick: saveDesign }, "Save & Share Redesign"),
+
+      shareUrl && e("a", {
+        className: "share-link",
+        href: shareUrl,
+        target: "_blank"
+      }, shareUrl),
+
+      e("p", { className: "status" }, status)
+    ]),
+
+    e("div", { className: "workspace", key: "workspace" }, [
+      e("div", { className: "image-box" }, [
+        e("h2", null, "Before + Selected Masks"),
+        e("div", { className: "before-box" }, [
+          imageUrl
+            ? e("img", { className: "base", src: imageUrl })
+            : e("p", { style: { padding: "20px" } }, "Before image will appear here."),
+
+          masks
+            .filter(function(mask) {
+              return selectedMasks.includes(mask.id);
+            })
+            .map(function(mask) {
+              return e("img", {
+                key: mask.id,
+                className: "overlay",
+                src: mask.mask_png
+              });
+            })
+        ])
+      ]),
+
+      e("div", { className: "image-box" }, [
+        e("h2", null, "After / Editable Canvas"),
+        e("div", { className: "canvas-wrap" }, [
+          e("canvas", { id: "designCanvas", width: 620, height: 430 })
+        ]),
+        e("p", { className: "tiny" }, "Yahan redesigned image show hogi. Furniture ko drag ya Add button se add karo.")
+      ])
+    ])
+  ]);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(e(App));
+</script>
+</body>
+</html>
