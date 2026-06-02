@@ -10,7 +10,7 @@ const STYLE_THEME_MAP = {
     velvet: 'industrial',
 }
 
-export default function LegacyDesign() {
+export default function LegacyDesign({ beforeImage, setBeforeImage }) {
     const [file, setFile] = useState(null)
     const [imageUrl, setImageUrl] = useState('')
     const [masks, setMasks] = useState([])
@@ -20,6 +20,7 @@ export default function LegacyDesign() {
     const [palettes, setPalettes] = useState(null)
     const [status, setStatus] = useState('Upload a room image to start.')
     const [shareUrl, setShareUrl] = useState('')
+    const [afterImage, setAfterImage] = useState('')
     const fabricCanvas = useRef(null)
     const fabricLibRef = useRef(null)
 
@@ -85,6 +86,16 @@ export default function LegacyDesign() {
         return fabricCanvas.current
     }
 
+    function updateAfterImage() {
+        const canvas = getCanvas()
+        if (!canvas) return
+        try {
+            setAfterImage(canvas.toDataURL({ format: 'png', quality: 0.8 }))
+        } catch (err) {
+            console.warn('After image update failed:', err)
+        }
+    }
+
     async function setCanvasBackground(url) {
         const canvas = getCanvas()
         if (!canvas) {
@@ -98,10 +109,13 @@ export default function LegacyDesign() {
 
         if (!url) {
             canvas.renderAll()
+            updateAfterImage()
             return
         }
 
-        const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`
+        const fullUrl = url.startsWith('http') || url.startsWith('data:') || url.startsWith('blob:')
+            ? url
+            : `${API_BASE}${url}`
         const fabric = fabricLibRef.current
         if (!fabric) {
             setStatus('Fabric loading failed. Please refresh.')
@@ -142,6 +156,7 @@ export default function LegacyDesign() {
             canvas.sendToBack(img)
             oldFurniture.forEach((obj) => canvas.add(obj))
             canvas.renderAll()
+            updateAfterImage()
             setStatus('Editable canvas image loaded. Now add or reposition furniture.')
         } catch (e) {
             console.error('Image loading failed:', e)
@@ -173,9 +188,10 @@ export default function LegacyDesign() {
             const url = data.imageSource?.url || data.image_url || ''
             const absUrl = url.startsWith('http') ? url : `${API_BASE}${url}`
             setImageUrl(absUrl)
-            setMasks(data.masks || [])
             setSelectedMasks([])
+            setMasks(data.masks || [])
             setShareUrl('')
+            setBeforeImage && setBeforeImage(absUrl)
             await setCanvasBackground(absUrl)
             loadPalettes(url)
             setStatus('Image segmented. Select a region to recolor or apply style.')
@@ -186,11 +202,15 @@ export default function LegacyDesign() {
     }
 
     async function loadPalettes(imageUrlValue) {
+        if (!imageUrlValue) return
+        const payload = imageUrlValue.startsWith('data:image')
+            ? { imageData: imageUrlValue }
+            : { imageUrl: imageUrlValue }
         try {
             const res = await fetch(`${API_BASE}/api/palette`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ imageUrl: imageUrlValue }),
+                body: JSON.stringify(payload),
             })
             const data = await res.json()
             if (res.ok) {
@@ -201,6 +221,56 @@ export default function LegacyDesign() {
         }
     }
 
+    async function segmentSharedImage(sharedSource) {
+        if (!sharedSource) return
+        setStatus('Segmenting shared image...')
+        try {
+            const payload = sharedSource.startsWith('data:image')
+                ? { imageData: sharedSource }
+                : { imageUrl: sharedSource }
+            const res = await fetch(`${API_BASE}/api/segment`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            })
+            const data = await res.json()
+            if (!res.ok) {
+                setStatus(data.error || 'Segmentation failed.')
+                return
+            }
+            const url = data.imageSource?.url || data.image_url || ''
+            const absUrl = url.startsWith('http') ? url : `${API_BASE}${url}`
+            setImageUrl(absUrl)
+            setMasks(data.masks || [])
+            setSelectedMasks([])
+            setShareUrl('')
+            await setCanvasBackground(absUrl)
+            loadPalettes(url)
+            setStatus('Shared image segmented. Select a region to recolor or apply style.')
+        } catch (err) {
+            console.error(err)
+            setStatus('Shared image segmentation failed.')
+        }
+    }
+
+    useEffect(() => {
+        if (!beforeImage || imageUrl) return
+        segmentSharedImage(beforeImage)
+    }, [beforeImage, imageUrl])
+
+    function normalizeMaskType(mask) {
+        if (!mask) return null
+        const rawType = String(mask.type || '').toLowerCase().trim()
+        if (!rawType) return null
+        if (rawType === 'object/furniture') {
+            const name = String(mask.name || '').toLowerCase().trim()
+            if (['sofa', 'table', 'lamp', 'furniture'].includes(name)) return name
+            return 'furniture'
+        }
+        if (rawType.startsWith('object/')) return rawType.split('/')[1]
+        return rawType
+    }
+
     function toggleMask(maskId) {
         if (selectedMasks.includes(maskId)) {
             setSelectedMasks(selectedMasks.filter((id) => id !== maskId))
@@ -209,15 +279,19 @@ export default function LegacyDesign() {
         }
     }
 
-    function selectOnly(maskId) {
-        setSelectedMasks([maskId])
+    function selectOnly(mask) {
+        const regionType = normalizeMaskType(mask)
+        if (!regionType) return
+        setSelectedMasks(masks.filter((item) => normalizeMaskType(item) === regionType).map((item) => item.id))
     }
 
     function chosenRegion() {
-        if (selectedMasks.length === 0) return null
-        if (selectedMasks.includes('wall')) return 'wall'
-        if (selectedMasks.includes('floor')) return 'floor'
-        return selectedMasks[0]
+        const selected = masks.filter((mask) => selectedMasks.includes(mask.id))
+        if (selected.length === 0) return null
+        const types = [...new Set(selected.map(normalizeMaskType).filter(Boolean))]
+        if (types.includes('wall')) return 'wall'
+        if (types.includes('floor')) return 'floor'
+        return types[0] || null
     }
 
     async function applyWallColor() {
@@ -314,6 +388,7 @@ export default function LegacyDesign() {
             canvas.add(object)
             canvas.setActiveObject(object)
             canvas.renderAll()
+            updateAfterImage()
             setStatus(`${kind} added. You can move or resize it.`)
         }
     }
@@ -324,6 +399,7 @@ export default function LegacyDesign() {
         if (active && active.customType === 'furniture') {
             canvas.remove(active)
             canvas.renderAll()
+            updateAfterImage()
             setStatus('Selected furniture deleted.')
         } else {
             setStatus('Please select a furniture item first.')
@@ -338,6 +414,7 @@ export default function LegacyDesign() {
             }
         })
         canvas.renderAll()
+        updateAfterImage()
         setStatus('Furniture items cleared.')
     }
 
@@ -377,6 +454,24 @@ export default function LegacyDesign() {
                 </div>
 
                 <div className="canvas-wrap" style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '18px', marginTop: '18px' }}>
+                    <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '18px' }}>
+                        <div className="panel">
+                            <h3>Before</h3>
+                            {(beforeImage || imageUrl) ? (
+                                <img src={beforeImage || imageUrl} alt="Before" style={{ width: '100%', borderRadius: '12px' }} />
+                            ) : (
+                                <div className="img-empty-v2" style={{ minHeight: '260px' }}>Upload a room photo to preview the before image.</div>
+                            )}
+                        </div>
+                        <div className="panel">
+                            <h3>After</h3>
+                            {afterImage ? (
+                                <img src={afterImage} alt="After" style={{ width: '100%', borderRadius: '12px' }} />
+                            ) : (
+                                <div className="img-empty-v2" style={{ minHeight: '260px' }}>Canvas updates will appear here.</div>
+                            )}
+                        </div>
+                    </div>
                     <div className="panel" style={{ minHeight: '700px' }}>
                         <h3>Controls</h3>
                         <label>Upload Room Image</label>
@@ -385,6 +480,7 @@ export default function LegacyDesign() {
                         <p className="palette-hint-v2">Use a room photo with visible walls and floor for best results.</p>
 
                         <h3 style={{ marginTop: '18px' }}>Select Regions</h3>
+                        <div style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '8px' }}>Selected region: {chosenRegion() || 'None'}</div>
                         <div style={{ maxHeight: '220px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.08)', padding: '10px', borderRadius: '10px', background: 'rgba(255,255,255,0.02)' }}>
                             {masks.length === 0 ? (
                                 <p style={{ margin: 0, color: '#94a3b8' }}>No masks available yet.</p>
@@ -394,7 +490,7 @@ export default function LegacyDesign() {
                                         <input type="checkbox" checked={selectedMasks.includes(mask.id)} onChange={() => toggleMask(mask.id)} style={{ marginRight: '8px' }} />
                                         {mask.name} · {mask.type}
                                     </label>
-                                    <button type="button" style={{ background: '#1f2937', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '6px 9px', fontSize: '12px' }} onClick={() => selectOnly(mask.id)}>Only</button>
+                                    <button type="button" style={{ background: '#1f2937', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '6px 9px', fontSize: '12px' }} onClick={() => selectOnly(mask)}>Only</button>
                                 </div>
                             ))}
                         </div>

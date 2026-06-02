@@ -85,7 +85,7 @@ export default function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/dashboard" element={<Dashboard uiConfig={uiConfig} beforeImage={beforeImage} setBeforeImage={setBeforeImage} palette={palette} setPalette={setPalette} targetColor={targetColor} setTargetColor={setTargetColor} designOptions={designOptions} setDesignOptions={setDesignOptions} />} />
             <Route path="/results" element={<Results uiConfig={uiConfig} socket={socket} clientId={clientId} beforeImage={beforeImage} palette={palette} targetColor={targetColor} setTargetColor={setTargetColor} designOptions={designOptions} />} />
-            <Route path="/legacy" element={<LegacyDesign />} />
+            <Route path="/legacy" element={<LegacyDesign beforeImage={beforeImage} setBeforeImage={setBeforeImage} />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/about" element={<About />} />
           </Routes>

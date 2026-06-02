@@ -150,6 +150,7 @@ def build_room_masks_from_model(image_rgb: np.ndarray) -> dict[str, np.ndarray] 
         x0, x1 = int(xs.min()), int(xs.max())
         y0, y1 = int(ys.min()), int(ys.max())
         comps = [{'contour': None, 'area': (x1 - x0) * (y1 - y0), 'bbox': (x0, y0, x1 - x0, y1 - y0), 'cy': (y0 + y1) / 2.0}]
+        assign = np.array([1])
 
     if not comps:
         return None
@@ -184,11 +185,14 @@ def build_room_masks_from_model(image_rgb: np.ndarray) -> dict[str, np.ndarray] 
             comp_mask[y:y+ch, x:x+cw] = 1
         if assign[idx] == lower_cluster:
             # lower cluster components are either floor patches or furniture;
-            # decide by vertical coverage: if component extends to bottom edge it's likely floor
-            if (y + ch) >= int(h * 0.94) or (ch / h) > 0.35:
-                floor_mask |= (comp_mask.astype(bool))
+            # decide by bottom coverage and vertical extent.
+            comp_bool = comp_mask.astype(bool)
+            bottom_zone = comp_bool[int(h * 0.70):, :]
+            bottom_ratio = bottom_zone.sum() / max(1, comp_bool.sum())
+            if (y + ch) >= int(h * 0.94) or bottom_ratio > 0.60 or (ch / h) > 0.50:
+                floor_mask |= comp_bool
             else:
-                furniture_mask |= (comp_mask.astype(bool))
+                furniture_mask |= comp_bool
         else:
             # upper cluster -> likely wall or background; ignore small items
             pass
@@ -199,6 +203,19 @@ def build_room_masks_from_model(image_rgb: np.ndarray) -> dict[str, np.ndarray] 
     masks['wall'] = wall_mask
     masks['floor'] = floor_mask
     masks['furniture'] = furniture_mask
+
+    # sanity check: if the model-derived room masks are clearly wrong, use deterministic fallback
+    total_pixels = h * w
+    if (
+        wall_mask.sum() < total_pixels * 0.02
+        or wall_mask.sum() > total_pixels * 0.90
+        or floor_mask.sum() < total_pixels * 0.02
+        or floor_mask.sum() > total_pixels * 0.70
+        or (furniture_mask.sum() > total_pixels * 0.45 and floor_mask.sum() < total_pixels * 0.10)
+    ):
+        fallback_masks = build_fallback_masks(h, w)
+        if fallback_masks['wall'].sum() > 0 and fallback_masks['floor'].sum() > 0:
+            return fallback_masks
 
     # Try to split furniture into coarse categories by bbox geometry
     # (wide -> sofa, narrow+tall -> lamp, square-ish -> table)

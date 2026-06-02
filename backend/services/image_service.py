@@ -63,8 +63,9 @@ def parse_image_request(req: Any, upload_dir: Path) -> tuple[np.ndarray, dict[st
         }
 
     body = req.get_json(silent=True) or {}
-    if isinstance(body.get("imageData"), str) and body["imageData"].startswith("data:image"):
-        raw = decode_data_url(body["imageData"])
+    image_data = body.get("imageData") or body.get("image_data")
+    if isinstance(image_data, str) and image_data.startswith("data:image"):
+        raw = decode_data_url(image_data)
         image = Image.open(BytesIO(raw)).convert("RGB")
         arr = np.array(image)
         digest = hashlib.sha1(raw).hexdigest()[:10]
@@ -76,8 +77,21 @@ def parse_image_request(req: Any, upload_dir: Path) -> tuple[np.ndarray, dict[st
             "url": f"/uploads/{filename}",
         }
 
-    image_url = body.get("imageUrl")
+    image_url = body.get("imageUrl") or body.get("image_url")
     if isinstance(image_url, str):
+        if image_url.startswith("data:image"):
+            raw = decode_data_url(image_url)
+            image = Image.open(BytesIO(raw)).convert("RGB")
+            arr = np.array(image)
+            digest = hashlib.sha1(raw).hexdigest()[:10]
+            filename = f"{utc_stamp()}_{digest}.png"
+            image.save(upload_dir / filename)
+            return arr, {
+                "source": "data_url",
+                "filename": filename,
+                "url": f"/uploads/{filename}",
+            }
+
         from urllib.parse import urlparse
 
         parsed = urlparse(image_url)
