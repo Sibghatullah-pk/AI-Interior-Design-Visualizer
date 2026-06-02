@@ -85,7 +85,7 @@ export default function LegacyDesign() {
         return fabricCanvas.current
     }
 
-    function setCanvasBackground(url) {
+    async function setCanvasBackground(url) {
         const canvas = getCanvas()
         if (!canvas) {
             setStatus('Canvas is not ready.')
@@ -108,13 +108,32 @@ export default function LegacyDesign() {
             return
         }
 
-        fabric.Image.fromURL(fullUrl, (img) => {
-            const scale = Math.min(canvas.width / img.width, canvas.height / img.height)
+        console.log('Loading image from:', fullUrl)
+        try {
+            // Fabric.js v7 uses promise-based API
+            const img = await fabric.Image.fromURL(fullUrl, {
+                crossOrigin: 'anonymous',
+            })
+            console.log('Image loaded successfully:', img.width, 'x', img.height)
+
+            // Scale image to fit canvas while maintaining aspect ratio
+            const maxWidth = canvas.width
+            const maxHeight = canvas.height
+            let scale = 1
+
+            if (img.width > maxWidth || img.height > maxHeight) {
+                const scaleX = maxWidth / img.width
+                const scaleY = maxHeight / img.height
+                scale = Math.min(scaleX, scaleY)
+            }
+
             img.set({
-                left: 0,
-                top: 0,
+                left: canvas.width / 2,
+                top: canvas.height / 2,
                 scaleX: scale,
                 scaleY: scale,
+                originX: 'center',
+                originY: 'center',
                 selectable: false,
                 evented: false,
                 customType: 'background',
@@ -124,7 +143,10 @@ export default function LegacyDesign() {
             oldFurniture.forEach((obj) => canvas.add(obj))
             canvas.renderAll()
             setStatus('Editable canvas image loaded. Now add or reposition furniture.')
-        }, { crossOrigin: 'anonymous' })
+        } catch (e) {
+            console.error('Image loading failed:', e)
+            setStatus(`Image loading failed: ${e.message}`)
+        }
     }
 
     async function uploadImage() {
@@ -154,7 +176,7 @@ export default function LegacyDesign() {
             setMasks(data.masks || [])
             setSelectedMasks([])
             setShareUrl('')
-            setCanvasBackground(absUrl)
+            await setCanvasBackground(absUrl)
             loadPalettes(url)
             setStatus('Image segmented. Select a region to recolor or apply style.')
         } catch (err) {
@@ -388,7 +410,7 @@ export default function LegacyDesign() {
                                     <div key={paletteItem.name} style={{ marginBottom: '12px' }}>
                                         <strong style={{ color: '#fff' }}>{paletteItem.name}</strong>
                                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
-                                            {paletteItem.colors.map((color) => (
+                                            {paletteItem.colors?.map((color) => (
                                                 <button key={color} type="button" title={color} onClick={() => setWallColor(color)} style={{ width: '32px', height: '32px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.1)', background: color, cursor: 'pointer' }} />
                                             ))}
                                         </div>

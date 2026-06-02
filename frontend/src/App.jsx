@@ -53,9 +53,12 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const s = io(API_BASE, { transports: ['websocket', 'polling'] })
+    const s = io(API_BASE, { transports: ['polling'] })
     s.on('connect', () => {
       s.emit('join', { clientId })
+    })
+    s.on('connect_error', (err) => {
+      console.warn('Socket connect error:', err)
     })
     setSocket(s)
     return () => {

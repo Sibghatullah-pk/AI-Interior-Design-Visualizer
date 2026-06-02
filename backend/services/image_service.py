@@ -32,10 +32,25 @@ def decode_data_url(data_url: str) -> bytes:
     return base64.b64decode(payload)
 
 
+def hex_to_bgr(hex_color: str) -> np.ndarray:
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 3:
+        hex_color = ''.join([c * 2 for c in hex_color])
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return np.array([b, g, r], dtype=np.uint8)
+
+
+def bgr_to_hex(bgr: np.ndarray) -> str:
+    b, g, r = int(bgr[0]), int(bgr[1]), int(bgr[2])
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def parse_image_request(req: Any, upload_dir: Path) -> tuple[np.ndarray, dict[str, Any]]:
     # Supports multipart form upload, base64 data URL, or image URL from this backend.
-    if req.files.get("image"):
-        file_obj = req.files["image"]
+    file_obj = req.files.get("image") or req.files.get("room")
+    if file_obj:
         raw = file_obj.read()
         image = Image.open(BytesIO(raw)).convert("RGB")
         arr = np.array(image)
@@ -66,20 +81,12 @@ def parse_image_request(req: Any, upload_dir: Path) -> tuple[np.ndarray, dict[st
         from urllib.parse import urlparse
 
         parsed = urlparse(image_url)
-        if parsed.path.startswith("/uploads/"):
-            filename = parsed.path.replace("/uploads/", "", 1)
-            path = upload_dir / filename
-            if not path.exists():
-                raise ValueError("Referenced upload does not exist")
-            image = Image.open(path).convert("RGB")
-            return np.array(image), {
-                "source": "uploaded_url",
-                "filename": filename,
-                "url": parsed.path,
-            }
-        # Allow absolute backend URLs if they point to the local uploads route.
-        if parsed.scheme in ("http", "https") and parsed.path.startswith("/uploads/"):
-            filename = parsed.path.replace("/uploads/", "", 1)
+        local_path = parsed.path
+        if local_path.startswith("/api/uploads/"):
+            local_path = local_path.replace("/api/uploads/", "/uploads/", 1)
+
+        if local_path.startswith("/uploads/"):
+            filename = local_path.replace("/uploads/", "", 1)
             path = upload_dir / filename
             if not path.exists():
                 raise ValueError("Referenced upload does not exist")
@@ -217,39 +224,3 @@ def create_palette_recommendations(image: np.ndarray) -> dict[str, Any]:
         'dominant_colors': dominant,
         'recommendations': recommendations,
     }
-
-
-def bbox_from_mask(mask: np.ndarray) -> list[int]:
-    ys, xs = np.where(mask)
-    if len(xs) == 0 or len(ys) == 0:
-        return [0, 0, 0, 0]
-
-    x1, x2 = int(xs.min()), int(xs.max())
-    y1, y2 = int(ys.min()), int(ys.max())
-    return [x1, y1, x2 - x1, y2 - y1]
-
-
-def mask_to_png_data_url(mask: np.ndarray, index: int = 0) -> str:
-    if cv2 is None:
-        raise RuntimeError('OpenCV is required to build mask overlays')
-
-    h, w = mask.shape
-    colors = [
-        (0, 255, 255, 120),
-        (255, 0, 255, 120),
-        (255, 255, 0, 120),
-        (0, 180, 255, 120),
-        (255, 180, 0, 120),
-        (120, 255, 120, 120),
-        (255, 80, 80, 120),
-        (80, 255, 180, 120),
-    ]
-    color = colors[index % len(colors)]
-    overlay = np.zeros((h, w, 4), dtype=np.uint8)
-    overlay[mask.astype(bool)] = color
-
-    success, buffer = cv2.imencode('.png', overlay)
-    if not success:
-        return ''
-
-    return 'data:image/png;base64,' + base64.b64encode(buffer).decode('utf-8')

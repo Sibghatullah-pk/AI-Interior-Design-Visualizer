@@ -146,7 +146,20 @@ def analytics():
 def palette():
     try:
         ensure_storage_dirs()
-        image_rgb, image_source = parse_image_request(request, UPLOAD_DIR)
+        body = request.get_json(silent=True) or {}
+        image_id = body.get("imageId") or body.get("image_id")
+        if image_id:
+            image_path = UPLOAD_DIR / f"{image_id}.png"
+            if not image_path.exists():
+                raise ValueError("Referenced image_id does not exist")
+            image_rgb = np.array(Image.open(image_path).convert("RGB"))
+            image_source = {
+                "source": "image_id",
+                "filename": f"{image_id}.png",
+                "url": f"/uploads/{image_id}.png",
+            }
+        else:
+            image_rgb, image_source = parse_image_request(request, UPLOAD_DIR)
 
         room_palette = extract_palette(image_rgb, k=5)
         recommendations = suggest_wall_palettes(room_palette)
@@ -272,6 +285,7 @@ def redesign():
 
 
 @api.route("/segment", methods=["POST"])
+@api.route("/upload", methods=["POST"])
 def segment():
     try:
         ensure_storage_dirs()
@@ -361,11 +375,11 @@ def recolor():
         client_id = _client_id_from_request(body)
         emit_to_client("recolor_started", {"clientId": client_id, "stage": "recolor", "progress": 0}, client_id)
         image_rgb, image_source = parse_image_request(request, UPLOAD_DIR)
-        target = body.get('targetColor') or request.form.get('targetColor')
+        target = body.get('targetColor') or body.get('color') or request.form.get('targetColor') or request.form.get('color')
         mask_ids = body.get('mask_ids') or body.get('maskIds') or []
         region = body.get('region') or request.form.get('region')
         if not target:
-            raise ValueError('Provide targetColor as hex string like #aabbcc')
+            raise ValueError('Provide targetColor or color as hex string like #aabbcc')
 
         try:
             masks = segmentation_service.build_room_masks_from_model(image_rgb)
@@ -431,6 +445,47 @@ def recommend():
         return jsonify({'error': str(exc)}), 400
 
 
+@api.route("/style", methods=["POST"])
+def style():
+    try:
+        ensure_storage_dirs()
+        body = request.get_json(silent=True) or {}
+        client_id = _client_id_from_request(body)
+        image_rgb, image_source = parse_image_request(request, UPLOAD_DIR)
+        mask_ids = body.get('mask_ids') or body.get('maskIds') or []
+        style_name = body.get('style') or body.get('styleTheme') or body.get('theme') or 'modern'
+
+        if not isinstance(mask_ids, list) or not mask_ids:
+            raise ValueError('Select at least one mask_id for style application')
+
+        try:
+            masks = segmentation_service.build_room_masks_from_model(image_rgb)
+            if masks is None:
+                masks = segmentation_service.build_fallback_masks(image_rgb.shape[0], image_rgb.shape[1])
+        except Exception:
+            masks = segmentation_service.build_fallback_masks(image_rgb.shape[0], image_rgb.shape[1])
+
+        selected_mask = combine_selected_masks(masks, mask_ids)
+        if selected_mask is None:
+            raise ValueError('No valid mask selected for style')
+
+        styled = apply_furniture_style(image_rgb, selected_mask, style_name)
+
+        from io import BytesIO
+        import base64
+        buff = BytesIO()
+        Image.fromarray(styled).save(buff, format='PNG')
+        preview_url = f'data:image/png;base64,{base64.b64encode(buff.getvalue()).decode("ascii")}'
+
+        return jsonify({
+            'status': 'success',
+            'previewUrl': preview_url,
+            'style': style_name,
+        })
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
 @api.route("/designs/save", methods=["POST"])
 def save_design():
     ensure_storage_dirs()
@@ -446,6 +501,11 @@ def save_design():
         "shareUrl": f"/api/designs/{design_id}",
         "share_url": f"/api/designs/{design_id}",
     })
+
+
+@api.route("/save-design", methods=["POST"])
+def save_design_alias():
+    return save_design()
 
 
 @api.route("/designs/<design_id>", methods=["GET"])
