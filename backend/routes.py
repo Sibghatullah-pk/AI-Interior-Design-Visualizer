@@ -9,7 +9,13 @@ from flask import Blueprint, Flask, jsonify, request, send_from_directory
 from PIL import Image
 
 from backend.config import FURNITURE_CATALOG, OUTPUT_DIR, PREVIEW_DIR, STYLE_THEMES, UPLOAD_DIR, ensure_storage_dirs
-from backend.services.image_service import parse_image_request
+from backend.services.image_service import (
+    bbox_from_mask,
+    mask_to_png_data_url,
+    parse_image_request,
+    recolor_area,
+    apply_furniture_style,
+)
 from backend.services.palette_service import extract_palette, suggest_wall_palettes
 from backend.services.redesign_service import apply_style_theme, build_design_payload
 from backend.services import segmentation_service
@@ -74,6 +80,35 @@ def add_api_prefix_to_url(url: str | None) -> str | None:
     if url.startswith("/"):
         return f"/api{url}"
     return url
+
+
+def combine_selected_masks(masks: dict[str, Any], selected_ids: list[Any]) -> np.ndarray | None:
+    if not selected_ids:
+        return None
+
+    ordered_keys = list(masks.keys())
+    combined: np.ndarray | None = None
+
+    for item in selected_ids:
+        mask = None
+        if isinstance(item, str) and item in masks:
+            mask = masks[item]
+        elif isinstance(item, int) and 0 <= item < len(ordered_keys):
+            mask = masks[ordered_keys[item]]
+        elif isinstance(item, str) and item.isdigit():
+            idx = int(item)
+            if 0 <= idx < len(ordered_keys):
+                mask = masks[ordered_keys[idx]]
+
+        if mask is None:
+            continue
+
+        if combined is None:
+            combined = mask.copy()
+        else:
+            combined = combined | mask
+
+    return combined
 
 
 @api.route("/health", methods=["GET"])
@@ -273,7 +308,34 @@ def segment():
 
         image_source["url"] = add_api_prefix_to_url(image_source.get("url"))
 
+        mask_items = []
+        region_order = [
+            ("wall", "Wall", "wall"),
+            ("floor", "Floor", "floor"),
+            ("furniture", "Furniture", "object/furniture"),
+            ("sofa", "Sofa", "object/furniture"),
+            ("table", "Table", "object/furniture"),
+            ("lamp", "Lamp", "object/furniture"),
+        ]
+        for index, (key, name, mask_type) in enumerate(region_order):
+            if key not in masks:
+                continue
+            mask = masks[key]
+            mask_items.append({
+                "id": key,
+                "name": name,
+                "type": mask_type,
+                "area": int(mask.sum()),
+                "bbox": bbox_from_mask(mask),
+                "mask_png": mask_to_png_data_url(mask, index),
+            })
+
         return jsonify({
+            "status": "success",
+            "image_id": image_source.get("filename", ""),
+            "image_url": image_source.get("url"),
+            "mask_count": len(mask_items),
+            "masks": mask_items,
             "imageSource": image_source,
             "vectorLayers": vector_layers,
             "regions": {
@@ -295,17 +357,16 @@ def segment():
 def recolor():
     try:
         ensure_storage_dirs()
-        # accepts multipart 'image' or JSON 'imageData' and params: region (wall/floor/etc), targetColor
         body = request.get_json(silent=True) or {}
         client_id = _client_id_from_request(body)
         emit_to_client("recolor_started", {"clientId": client_id, "stage": "recolor", "progress": 0}, client_id)
         image_rgb, image_source = parse_image_request(request, UPLOAD_DIR)
-        region = body.get('region') or request.form.get('region') or 'wall'
         target = body.get('targetColor') or request.form.get('targetColor')
+        mask_ids = body.get('mask_ids') or body.get('maskIds') or []
+        region = body.get('region') or request.form.get('region')
         if not target:
             raise ValueError('Provide targetColor as hex string like #aabbcc')
 
-        # Ensure we have segmentation masks for region
         try:
             masks = segmentation_service.build_room_masks_from_model(image_rgb)
             if masks is None:
@@ -313,16 +374,25 @@ def recolor():
         except Exception:
             masks = segmentation_service.build_fallback_masks(image_rgb.shape[0], image_rgb.shape[1])
 
-        if region not in masks:
-            raise ValueError(f'Region "{region}" not found in segmentation masks')
+        selected_mask = None
+        selected_region = region
+        if isinstance(mask_ids, list) and mask_ids:
+            selected_mask = combine_selected_masks(masks, mask_ids)
+            selected_region = ','.join(str(i) for i in mask_ids)
+        elif region:
+            if region not in masks:
+                raise ValueError(f'Region "{region}" not found in segmentation masks')
+            selected_mask = masks[region]
+        else:
+            raise ValueError('Provide region or mask_ids to recolor')
 
-        mask = masks[region]
+        if selected_mask is None:
+            raise ValueError('No valid mask selected for recolor')
+
         from backend.services.palette_service import hex_to_rgb
         tgt_rgb = hex_to_rgb(target)
+        recolored = recolor_area(image_rgb, selected_mask, target)
 
-        recolored = recolor_region_preserve_lighting(image_rgb, mask, tgt_rgb.tolist(), strength=1.0)
-
-        # return data URL (do not persist unless configured)
         from io import BytesIO
         import base64
         buff = BytesIO()
@@ -336,13 +406,13 @@ def recolor():
                 "stage": "recolor",
                 "progress": 100,
                 "previewUrl": preview_url,
-                "region": region,
+                "region": selected_region,
             },
             client_id,
         )
         return jsonify({
             'previewUrl': preview_url,
-            'region': region
+            'region': selected_region
         })
     except Exception as exc:
         return jsonify({'error': str(exc)}), 400

@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard'
 import Results from './pages/Results'
 import About from './pages/About'
 import Analytics from './pages/Analytics'
+import LegacyDesign from './pages/LegacyDesign'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:5000'
 
@@ -81,6 +82,7 @@ export default function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/dashboard" element={<Dashboard uiConfig={uiConfig} beforeImage={beforeImage} setBeforeImage={setBeforeImage} palette={palette} setPalette={setPalette} targetColor={targetColor} setTargetColor={setTargetColor} designOptions={designOptions} setDesignOptions={setDesignOptions} />} />
             <Route path="/results" element={<Results uiConfig={uiConfig} socket={socket} clientId={clientId} beforeImage={beforeImage} palette={palette} targetColor={targetColor} setTargetColor={setTargetColor} designOptions={designOptions} />} />
+            <Route path="/legacy" element={<LegacyDesign />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/about" element={<About />} />
           </Routes>

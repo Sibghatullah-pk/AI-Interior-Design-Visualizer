@@ -14,6 +14,7 @@ export default function NavBar() {
         <Link to="/" onClick={() => setOpen(false)}>Landing</Link>
         <Link to="/dashboard" onClick={() => setOpen(false)}>Dashboard</Link>
         <Link to="/results" onClick={() => setOpen(false)}>Results</Link>
+        <Link to="/legacy" onClick={() => setOpen(false)}>Legacy</Link>
         <Link to="/analytics" onClick={() => setOpen(false)}>Analytics</Link>
         <Link to="/about" onClick={() => setOpen(false)}>About</Link>
       </div>

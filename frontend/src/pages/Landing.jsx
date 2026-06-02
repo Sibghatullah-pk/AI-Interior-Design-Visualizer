@@ -15,6 +15,7 @@ export default function Landing() {
           <div className="hero-cta-v2">
             <Link to="/dashboard" className="btn-v2 primary">Start Designing</Link>
             <Link to="/results" className="btn-v2">View Results</Link>
+            <Link to="/legacy" className="btn-v2">Open Legacy Page</Link>
           </div>
         </div>
         <div className="hero-visual-v2">
